@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/logo.png" width="120" alt="Service Settings logo">
+
 # Service Settings
 
 ### A one-page switchboard for the Windows services you actually care about

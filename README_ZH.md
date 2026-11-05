@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/logo.png" width="120" alt="Service Settings logo">
+
 # 服务设置
 
 ### 只为你真正关心的那几个 Windows 服务准备的开关面板
