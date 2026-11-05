@@ -15,7 +15,8 @@ function isAdmin() {
       return process.getuid() === 0 // macOS/Linux root 用户检测
     }
     return false
-  } catch (err) {
+  } catch {
+    // 当前平台不支持检测或无权限执行检测命令时，按非管理员处理
     return false
   }
 }
@@ -53,7 +54,6 @@ function runCmdAsAdmin(command) {
   })
 }
 
-// 创建窗口
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 900,
@@ -80,7 +80,6 @@ function createWindow() {
   }
 }
 
-// 应用初始化
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.electron')
   app.on('browser-window-created', (_, window) => {
