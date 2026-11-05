@@ -1,8 +1,6 @@
 // TestDB 数据库里只有一个对象库 config，以 id 为主键存放多条记录。
 //
-// 约定：服务列表存在 id 为 1 的单例记录里，loadData / updateData 都按 id 1 读写。
-// 例外：saveData 写入的是 id 3，与 id 1 不是同一条记录；这是既有实现，
-// 改动它会波及已安装用户的数据，故保持原样，仅在此记录约定以免后人误判为可随意调整。
+// 约定：服务列表统一存在 id 为 1 的单例记录里，saveData / loadData / updateData 都按 id 1 读写。
 
 /**
  * 打开 TestDB 数据库；首次打开时创建 config 对象库并以 id 为主键
@@ -24,8 +22,7 @@ export function openDB() {
 }
 
 /**
- * 写入 id 为 3 的记录。注意这不是 loadData 读取的 id 1 单例记录，
- * 详见文件头注释中的约定说明
+ * 整体写入 id 为 1 的单例记录（不存在则插入，存在则整条覆盖）。
  * @param {Array} list 服务列表
  * @returns {Promise<void>} 事务提交后 resolve
  */
@@ -33,7 +30,8 @@ export async function saveData(list) {
   const db = await openDB()
   const tx = db.transaction('config', 'readwrite')
   const store = tx.objectStore('config')
-  store.add({ id: 3, data: list })
+  // 用 put 而非 add：id 1 的记录第二次保存时已存在，add 会抛 ConstraintError
+  store.put({ id: 1, data: list })
   return new Promise((resolve) => (tx.oncomplete = resolve))
 }
 
