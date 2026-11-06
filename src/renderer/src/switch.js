@@ -1,5 +1,6 @@
 import { loadData, updateData } from './store'
 import { initDeleteIcons } from './delete'
+import { SERVICE_NAME_PATTERN, isDuplicateEntry } from '../../shared/services.js'
 
 // 当前服务列表：启动流程从数据库读出后赋给这里，供各事件回调共享
 let list
@@ -20,77 +21,140 @@ function debounce(func, timeout = 500) {
   }
 }
 
-/**
- * 注册开关状态监听
- * @param {HTMLElement} dom 开关（checkbox）元素
- * @param {string} serviceName 服务名称
- * @param {boolean} status 服务当前是否运行
- */
-function addEventListenerService(dom, serviceName, status) {
-  dom.checked = status
-  const handleToggle = debounce(() => {
-    changeSwitch(serviceName, dom)
-  }, 500)
-  // 开关是自定义外观，空格键默认不会改变 checked，需手动切换
-  dom.addEventListener('keydown', (e) => {
-    e.preventDefault()
-    if (e.key === ' ') {
-      dom.checked = !dom.checked
-      handleToggle()
-    }
+/** 把整个列表写回数据库（id 为 1 的单例记录） */
+function persistList() {
+  return updateData({
+    id: 1,
+    data: list
   })
-  dom.addEventListener('click', handleToggle)
 }
 
 /**
- * 查询服务状态，依赖主进程以管理员权限执行 sc query
+ * 查询服务真实状态，由主进程执行 sc query
  * @param {string} serviceName 服务名称
- * @returns {Promise<boolean>} 是否处于运行状态
+ * @returns {Promise<{ok: boolean, running: boolean, message?: string}>} 查询结果
  */
 async function getStatus(serviceName) {
-  let res = await window.api.run('sc query ' + serviceName)
-  if (res.success === true) return res.result.indexOf('4  RUNNING') !== -1
-  else return false
-}
-
-/**
- * 处理开关切换：通过 net start / net stop 启停服务
- * @param {string} serviceName 服务名称
- * @param {HTMLElement} dom 开关元素
- */
-async function changeSwitch(serviceName, dom) {
-  const obj = list.find((item) => item.serviceName === serviceName)
-  // isChanging 用于避免命令执行期间重复点击导致状态错乱
-  if (!obj.isChanging) {
-    obj.isChanging = true
-    if (obj.status) await window.api.run('net stop ' + serviceName)
-    else await window.api.run('net start ' + serviceName)
-    obj.status = !obj.status
-    dom.checked = obj.status
-    obj.isChanging = false
+  try {
+    const res = await window.api.serviceCommand('status', serviceName)
+    if (!res || res.success !== true) {
+      return { ok: false, running: false, message: (res && res.message) || '查询失败' }
+    }
+    return { ok: true, running: res.running === true }
+  } catch (err) {
+    return { ok: false, running: false, message: err.message }
   }
 }
 
 /**
- * 把服务列表渲染成卡片，并插入到容器最前面
- * @param {Array} list 服务列表
+ * 生成一张服务卡片，节点名与服务名只通过 textContent / data 属性写入，不拼 HTML
+ * @param {{domName: string, serviceName: string}} item 服务条目
+ * @returns {HTMLElement} 卡片元素
  */
-function initList(list) {
+function createCard(item) {
+  const card = document.createElement('div')
+  card.className = 'card'
+  // 删除时凭服务名回到列表条目，不再解析卡片上的文字
+  card.dataset.serviceName = item.serviceName
+
+  const title = document.createElement('div')
+  title.className = 'title'
+  title.textContent = `${item.domName}服务`
+
+  const label = document.createElement('label')
+  label.className = 'toggle-switch'
+  const input = document.createElement('input')
+  input.type = 'checkbox'
+  input.className = 'toggle-input'
+  input.setAttribute('aria-label', `${item.domName}服务开关`)
+  const slider = document.createElement('span')
+  slider.className = 'toggle-slider'
+  const thumb = document.createElement('span')
+  thumb.className = 'toggle-thumb'
+  slider.appendChild(thumb)
+  label.append(input, slider)
+  card.append(title, label)
+  return card
+}
+
+/**
+ * 注册开关状态监听
+ * @param {HTMLElement} input 开关（checkbox）元素
+ * @param {{serviceName: string, status: boolean, isChanging: boolean}} item 对应的列表条目
+ */
+function addEventListenerService(input, item) {
+  input.checked = item.status
+  const handleToggle = debounce(() => {
+    changeSwitch(input, item)
+  }, 500)
+  // 开关是自绘外观：空格键默认不会改变 checked，需手动切换。
+  // 只接管空格/回车，Tab 等其它按键保持浏览器默认行为（否则无法移出焦点）
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== ' ' && e.key !== 'Enter') return
+    e.preventDefault()
+    input.checked = !input.checked
+    handleToggle()
+  })
+  input.addEventListener('click', handleToggle)
+}
+
+/**
+ * 处理开关切换：通过 net start / net stop 启停服务，命令成功后才改状态与持久化
+ * @param {HTMLElement} input 开关元素
+ * @param {{serviceName: string, status: boolean, isChanging: boolean}} item 对应的列表条目
+ */
+async function changeSwitch(input, item) {
+  // isChanging 用于避免命令执行期间重复点击导致状态错乱
+  if (item.isChanging) {
+    input.checked = item.status
+    return
+  }
+
+  const target = input.checked
+  // 连点导致开关回到原位时无需执行命令
+  if (target === item.status) return
+  item.isChanging = true
+  input.disabled = true
+
+  const res = await window.api
+    .serviceCommand(target ? 'start' : 'stop', item.serviceName)
+    .catch((err) => ({ success: false, message: err.message }))
+  if (!res || res.success !== true) {
+    // 失败时把开关拨回持久化的状态，并把错误告诉用户
+    input.checked = item.status
+    item.isChanging = false
+    input.disabled = false
+    alert(`${target ? '启动' : '停止'}服务失败：${(res && res.message) || '未知错误'}`)
+    return
+  }
+
+  item.status = target
+  input.checked = target
+  item.isChanging = false
+  input.disabled = false
+  try {
+    await persistList()
+  } catch (err) {
+    alert(`保存状态失败：${err.message}`)
+  }
+}
+
+/**
+ * 把服务列表渲染成卡片，插在「新增」卡片之前，并返回卡片与条目的对应关系
+ * @returns {Array<{item: object, input: HTMLElement}>} 卡片开关与其列表条目
+ */
+function initList() {
   const container = document.getElementById('container')
-  // 分行拼接而非整段模板字面量：插入换行会在 innerHTML 里产生空白文本节点
-  container.innerHTML =
-    list
-      .map(
-        (item) =>
-          `<div class="card"><div class="title">${item.domName}服务</div>` +
-          `<label class="toggle-switch">` +
-          `<input type="checkbox" class="toggle-input" id="${item.domName}">` +
-          `<span class="toggle-slider"><span class="toggle-thumb"></span></span>` +
-          `</label></div>`
-      )
-      .join('') + container.innerHTML
+  const cardAdd = container.querySelector('.card-add')
+  const rows = list.map((item) => {
+    item.isChanging = false
+    const card = createCard(item)
+    container.insertBefore(card, cardAdd)
+    return { item, input: card.querySelector('.toggle-input') }
+  })
   initDeleteIcons(list)
   showmodelJsAdd()
+  return rows
 }
 
 /** 为「新增服务」弹框的各按钮绑定事件 */
@@ -120,25 +184,51 @@ function showmodelJsAdd() {
       alert('节点名称和服务名称不能为空！')
       return
     }
-    addDom(nodeName)
-    addEventListenerService(
-      document.getElementById(nodeName),
-      serviceName,
-      await getStatus(serviceName)
-    )
+    if (!SERVICE_NAME_PATTERN.test(serviceName)) {
+      alert('服务名称只能包含字母、数字、下划线、点、$ 和连字符！')
+      return
+    }
+    if (isDuplicateEntry(list, nodeName, serviceName)) {
+      alert('该节点名称或服务名称已存在，请勿重复添加！')
+      return
+    }
 
-    list.push({
+    // 查询期间锁住确认按钮，避免连点插入两张重复卡片
+    confirmBtn.disabled = true
+    let status
+    try {
+      status = await getStatus(serviceName)
+    } finally {
+      confirmBtn.disabled = false
+    }
+    if (!status.ok) {
+      alert(`无法查询服务 ${serviceName}：${status.message}`)
+      return
+    }
+
+    const item = {
       domName: nodeName,
       serviceName: serviceName,
-      status: false,
+      status: status.running,
       isChanging: false
-    })
-    myModal.style.display = 'none'
+    }
+    list.push(item)
+
+    const container = document.getElementById('container')
+    const card = createCard(item)
+    container.insertBefore(card, container.querySelector('.card-add'))
+    addEventListenerService(card.querySelector('.toggle-input'), item)
     initDeleteIcons(list)
-    updateData({
-      id: 1,
-      data: list
-    })
+    myModal.style.display = 'none'
+
+    try {
+      await persistList()
+    } catch (err) {
+      // 写库失败则回滚，界面与存储保持一致
+      list.pop()
+      card.remove()
+      alert(`保存失败：${err.message}`)
+    }
   })
 
   // 点击遮罩层（而非弹框内容）时关闭
@@ -147,31 +237,6 @@ function showmodelJsAdd() {
       myModal.style.display = 'none'
     }
   })
-
-  /**
-   * 在容器中插入新卡片，位置放在「新增」按钮之前
-   * @param {string} nodeName 节点名称，同时用作 checkbox 的 id
-   */
-  function addDom(nodeName) {
-    const parent = document.getElementById('container')
-    const oldNodes = Array.from(parent.children)
-    parent.innerHTML = ''
-    const tempContainer = document.createElement('div')
-    tempContainer.innerHTML = `
-    <div class="card">
-      <div class="title">${nodeName}服务</div>
-      <label class="toggle-switch">
-        <input type="checkbox" class="toggle-input" id="${nodeName}">
-        <span class="toggle-slider">
-          <span class="toggle-thumb"></span>
-        </span>
-      </label>
-    </div>
-  `
-    // 末尾是「新增」卡片，插到它前面
-    oldNodes.splice(oldNodes.length - 2, 0, tempContainer.firstElementChild)
-    oldNodes.forEach((node) => parent.appendChild(node))
-  }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -179,14 +244,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (listDB) list = listDB.data
   // 首次运行时数据库还没有约定好的 id 1 记录，给一个默认服务兜底
   else list = [{ domName: 'mysql', serviceName: 'MySQL84' }]
-  initList(list)
-  for (let i = 0; i < list.length; i++) {
-    list[i].status = await getStatus(list[i].serviceName)
-    list[i].isChanging = false
-    addEventListenerService(
-      document.getElementById(list[i].domName),
-      list[i].serviceName,
-      list[i].status
-    )
+
+  const rows = initList()
+  // 逐张查询真实状态：新增的卡片与重启后的卡片都以服务真实状态为准
+  for (const { item, input } of rows) {
+    const status = await getStatus(item.serviceName)
+    item.status = status.ok ? status.running : false
+    addEventListenerService(input, item)
   }
 })

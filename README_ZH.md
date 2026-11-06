@@ -56,7 +56,7 @@ npm run build:linux    # AppImage / snap / deb
 ## 使用流程
 
 1. **添加** —— 点击 `+` 卡片，填写「节点名称」（卡片上显示的文字）与「服务名称」（Windows 服务名），确认。
-2. **启停** —— 点击开关，或先聚焦再按 <kbd>空格</kbd>。开关要等命令返回后才移动，执行期间对同一张卡片的重复点击会被忽略。
+2. **启停** —— 点击开关，或先聚焦再按 <kbd>空格</kbd> / <kbd>回车</kbd>。命令失败时开关会弹回原位，执行期间对同一张卡片的重复点击会被忽略。
 3. **删除** —— 光标在卡片上停留 5 秒，角上出现 `×`；点击并确认后删除。
 
 数据库里还没有记录时，初始列表是一张 `mysql` 卡片、指向服务 `MySQL84` —— 随意编辑或删除即可。
@@ -65,13 +65,13 @@ npm run build:linux    # AppImage / snap / deb
 
 | 层       | 文件                         | 职责                                                                                   |
 | -------- | ---------------------------- | -------------------------------------------------------------------------------------- |
-| 主进程   | `src/main/index.js`          | 提权检查（`fltmc`）、用 `Start-Process -Verb RunAs` 自我重启、以 `cmd.exe /c` 执行命令 |
-| Preload  | `src/preload/index.js`       | 只向页面暴露一个调用：`window.api.run(command)` → IPC `run-cmd-as-admin`               |
-| 渲染进程 | `src/renderer/src/switch.js` | 渲染卡片、开关防抖（500 ms）、用 `sc query` 读取状态                                   |
+| 主进程   | `src/main/index.js`          | 缓存提权检查结果（`fltmc`）、最多一次 `Start-Process -Verb RunAs` 自我重启、用 `execFile` 以固定程序 + 参数数组执行 `sc` / `net` |
+| Preload  | `src/preload/index.js`       | 只向页面暴露一个调用：`window.api.serviceCommand(action, name)` → IPC `service-command`（载荷 `{ action, name }`） |
+| 渲染进程 | `src/renderer/src/switch.js` | 渲染卡片、开关防抖（500 ms）、通过 IPC 查询状态与启停                                    |
 | 渲染进程 | `src/renderer/src/delete.js` | 悬停显示删除图标、确认后删除                                                           |
 | 渲染进程 | `src/renderer/src/store.js`  | IndexedDB `TestDB` → `config`，id 为 `1` 的单条记录                                    |
 
-判断「运行中」时匹配 `sc query <name>` 输出里的 `4  RUNNING`，即匹配四位状态码而不只是那个单词 —— `STOP_PENDING`、`START_PENDING` 里也含字母，宽松匹配会误判。
+主进程判断「运行中」时匹配 `sc query <name>` 输出里的 `4  RUNNING`，即匹配四位状态码而不只是那个单词 —— `STOP_PENDING`、`START_PENDING` 里也含字母，宽松匹配会误判。
 
 ## 功能
 
@@ -127,7 +127,7 @@ npm run build:linux    # AppImage / snap / deb
 <details>
 <summary><strong>macOS / Linux 上能用吗？</strong></summary>
 
-能构建、能启动，但它执行的命令是 Windows 专用的：在 macOS / Linux 上提权对话框会直接说明这一点，而 `net start` / `sc query` 并不存在。这是一个 Windows 工具。
+能构建、能启动，但它执行的命令是 Windows 专用的：在 macOS / Linux 上每次启停都会返回权限错误，而 `net` / `sc` 并不存在。这是一个 Windows 工具。
 
 </details>
 

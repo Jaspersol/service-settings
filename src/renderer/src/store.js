@@ -61,9 +61,12 @@ export async function updateData(data) {
   const tx = db.transaction('config', 'readwrite')
   const store = tx.objectStore('config')
   const request = store.put(data)
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     request.onsuccess = (e) => {
       resolve(e.target.result)
+    }
+    request.onerror = (e) => {
+      reject(e.target.error)
     }
   })
 }

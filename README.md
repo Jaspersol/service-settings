@@ -56,7 +56,7 @@ npm run build:linux    # AppImage / snap / deb
 ## Usage
 
 1. **Add** — click the `+` card, enter a label (what the card will show) and the Windows service name, then confirm.
-2. **Toggle** — click the switch, or focus it and press <kbd>Space</kbd>. The switch moves only after the command returns, and further clicks are ignored while one is in flight.
+2. **Toggle** — click the switch, or focus it and press <kbd>Space</kbd> / <kbd>Enter</kbd>. The switch springs back if the command fails, and further clicks are ignored while one is in flight.
 3. **Delete** — rest the cursor on a card for 5 seconds; an `×` appears in the corner. Click it and confirm.
 
 The starting list, when the database has no record yet, is a single `mysql` card pointing at the service `MySQL84` — edit or delete it as you like.
@@ -65,13 +65,13 @@ The starting list, when the database has no record yet, is a single `mysql` card
 
 | Layer        | File                         | Responsibility                                                                                                        |
 | ------------ | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Main process | `src/main/index.js`          | Elevation check (`fltmc`), self-relaunch via `Start-Process -Verb RunAs`, and executing commands through `cmd.exe /c` |
-| Preload      | `src/preload/index.js`       | Exposes exactly one call to the page: `window.api.run(command)` → IPC `run-cmd-as-admin`                              |
-| Renderer     | `src/renderer/src/switch.js` | Renders cards, debounces toggles (500 ms), reads state with `sc query`                                                |
+| Main process | `src/main/index.js`          | Cached elevation check (`fltmc`), at most one `Start-Process -Verb RunAs` relaunch, and `execFile` of `sc` / `net` with a validated service name |
+| Preload      | `src/preload/index.js`       | Exposes exactly one call to the page: `window.api.serviceCommand(action, name)` → IPC `service-command` (payload `{ action, name }`) |
+| Renderer     | `src/renderer/src/switch.js` | Renders cards, debounces toggles (500 ms), requests state and start/stop over IPC                                      |
 | Renderer     | `src/renderer/src/delete.js` | Hover-to-reveal delete icon and confirm-then-remove                                                                   |
 | Renderer     | `src/renderer/src/store.js`  | IndexedDB `TestDB` → `config`, single record with id `1`                                                              |
 
-A service counts as running when `sc query <name>` output contains `4  RUNNING`. The four-digit state code is matched rather than the word alone, because `STOP_PENDING` and `START_PENDING` also contain letters that a looser check would misread.
+A service counts as running when the main process sees `4  RUNNING` in the `sc query <name>` output. The four-digit state code is matched rather than the word alone, because `STOP_PENDING` and `START_PENDING` also contain letters that a looser check would misread.
 
 ## Features
 
@@ -127,7 +127,7 @@ In IndexedDB inside the app's user-data folder — `%APPDATA%\service-settings` 
 <details>
 <summary><strong>Does it work on macOS or Linux?</strong></summary>
 
-It builds and starts, but the commands it runs are Windows-only: on macOS and Linux the elevation dialog says so, and `net start` / `sc query` don't exist. It is a Windows tool.
+It builds and starts, but the commands it runs are Windows-only: on macOS and Linux every start/stop request fails with a permission message, and `net` / `sc` don't exist. It is a Windows tool.
 
 </details>
 

@@ -2,7 +2,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
-  run: (command) => ipcRenderer.invoke('run-cmd-as-admin', command)
+  // 只转发 { action, name }，命令本身在主进程按固定可执行文件拼装
+  serviceCommand: (action, name) => ipcRenderer.invoke('service-command', { action, name })
 }
 
 if (process.contextIsolated) {
