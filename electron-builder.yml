@@ -1,5 +1,5 @@
 appId: com.electron.app
-productName: SS
+productName: ServiceSettings
 directories:
   buildResources: build
 files:
@@ -11,7 +11,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: SS
+  executableName: ServiceSettings
 nsis:
   artifactName: ${productName}-${version}-setup.${ext}
   shortcutName: ${productName}
