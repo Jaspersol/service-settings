@@ -9,7 +9,72 @@
   </head>
 
   <body>
+    <div class="titlebar">
+      <div class="titlebar-brand" data-tauri-drag-region>
+        <span class="titlebar-dot" aria-hidden="true"></span>
+        <span class="titlebar-title">服务设置</span>
+        <span class="titlebar-sub">Service Settings</span>
+      </div>
+      <div class="titlebar-drag" data-tauri-drag-region></div>
+      <div class="titlebar-actions">
+        <div class="titlebar-tools">
+          <button class="titlebar-tool" id="exportBtn" type="button">导出配置</button>
+          <button class="titlebar-tool" id="importBtn" type="button">导入配置</button>
+          <button
+            class="titlebar-tool titlebar-tool-edit"
+            id="editBtn"
+            type="button"
+            aria-pressed="false"
+          >
+            编辑
+          </button>
+          <button
+            class="titlebar-tool titlebar-tool-elevate"
+            id="titlebar-elevate"
+            type="button"
+            hidden
+          >
+            以管理员重启
+          </button>
+          <input type="file" id="importFile" accept="application/json,.json" hidden />
+        </div>
+        <div class="titlebar-window">
+          <button
+            class="titlebar-btn"
+            id="titlebar-minimize"
+            type="button"
+            aria-label="最小化"
+            title="最小化"
+          >
+            <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h8" /></svg>
+          </button>
+          <button
+            class="titlebar-btn"
+            id="titlebar-maximize"
+            type="button"
+            aria-label="最大化"
+            title="最大化"
+          >
+            <svg viewBox="0 0 10 10" aria-hidden="true">
+              <rect x="1.5" y="1.5" width="7" height="7" />
+            </svg>
+          </button>
+          <button
+            class="titlebar-btn titlebar-btn-close"
+            id="titlebar-close"
+            type="button"
+            aria-label="关闭"
+            title="关闭"
+          >
+            <svg viewBox="0 0 10 10" aria-hidden="true">
+              <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
     <div class="container" id="container">
+      <div class="empty-hint">还没有服务，点击标题栏「编辑」，再点 + 添加</div>
       <div class="card-add">
         <div class="add" id="add">+</div>
       </div>
@@ -30,11 +95,6 @@
           </div>
         </div>
       </div>
-    </div>
-    <div class="toolbar">
-      <button class="btn-tool" id="exportBtn">导出配置</button>
-      <button class="btn-tool" id="importBtn">导入配置</button>
-      <input type="file" id="importFile" accept="application/json,.json" hidden />
     </div>
     <script type="module" src="./src/switch.js"></script>
   </body>

@@ -26,10 +26,11 @@ English | [中文](README_ZH.md)
 
 - **One card per service** — the name you gave it, and a toggle that starts / stops the service through the Windows Service Control Manager
 - **State read from the real service** — refreshed on launch and every 5 seconds, so a service stopped elsewhere doesn't stay "running"
-- **Elevation handled once** — the app checks its token at startup and relaunches itself with the Windows `runas` verb if it isn't elevated
+- **Elevation handled once** — the app checks its token at startup and relaunches itself with the Windows `runas` verb if it isn't elevated; if UAC is declined, a 以管理员重启 button stays in the title bar so elevation can be retried without restarting the app
 - **The list survives restarts** — cards are stored in a JSON file managed by the Rust backend
-- **Back up and move your list** — export / import the configuration as a JSON file
-- **Deletion is deliberate** — the × button only appears after hovering the card for 5 seconds, so a stray cursor can't remove a service
+- **Back up and move your list** — export / import the configuration as a JSON file, from the buttons in the title bar
+- **Frameless window** — the borderless, fully transparent in-page title bar blends into the same gradient as the cards; drag it to move the window and use its minimize / maximize / close buttons
+- **Editing is explicit** — the `+` card and delete × only appear in edit mode (the 编辑 / 完成 button in the title bar), so a stray click can't remove a service
 
 ## Requirements
 
@@ -53,16 +54,16 @@ npm run build          # bundles the renderer into src/renderer/dist/
 npm run tauri build    # NSIS installer (x64)
 ```
 
-> On first launch Windows asks for elevation. If you decline, the window still opens but every start/stop fails with a permission message — restart the app and accept the prompt.
+> On first launch Windows asks for elevation. If you decline, the window still opens but every start/stop fails with a permission message — click **以管理员重启** in the title bar to retry.
 
 ## Usage
 
-1. **Add** — click the `+` card, enter a label (what the card will show) and the Windows service name, then confirm.
+1. **Add** — click 编辑 in the title bar, then click the `+` card (only visible in edit mode), enter a label and the Windows service name, then confirm.
 2. **Toggle** — click the switch, or focus it and press <kbd>Space</kbd> / <kbd>Enter</kbd>. The switch springs back if the command fails, and further clicks are ignored while one is in flight.
-3. **Delete** — rest the cursor on a card for 5 seconds; an `×` appears in the corner. Click it and confirm.
-4. **Export / import** — use the two buttons at the bottom of the window. Export downloads `service-settings.json`; import validates the file and reloads the page.
+3. **Delete** — in edit mode, click the plain × in a card's corner and confirm. Click 完成 to leave edit mode.
+4. **Export / import** — the two title-bar buttons. Export downloads `service-settings.json`; import validates the file and reloads the page.
 
-The starting list, when there is no configuration yet, is a single `mysql` card pointing at the service `MySQL84` — edit or delete it as you like.
+With no configuration yet the list is empty and shows an inline hint; click 编辑 and then the `+` card to add your first service.
 
 ## How it works
 
@@ -70,11 +71,12 @@ The starting list, when there is no configuration yet, is a single `mysql` card 
 | --------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Rust commands   | `src-tauri/src/lib.rs`       | Validates `action` / `name`, calls Win32 SCM (`OpenSCManagerW` / `OpenServiceW` / `QueryServiceStatusEx` / `StartServiceW` / `ControlService`), maps Win32 error codes, checks elevation via `TokenElevation` and relaunches with `runas` |
 | Rust storage    | `src-tauri/src/lib.rs`       | `load_services` / `save_services` read and atomically write `app_data_dir()/services.json`                                                                                                                                                |
-| Frontend bridge | `src/renderer/src/api.js`    | The single service call to the backend: `invoke('service_command', { action, name })`                                                                                                                                                     |
-| Renderer        | `src/renderer/src/switch.js` | Renders cards, debounces toggles (500 ms), refreshes state every 5 s                                                                                                                                                                      |
+| Frontend bridge | `src/renderer/src/api.js`    | `invoke` wrappers for service commands, elevation status and elevation restart                                                                                                                                                            |
+| Renderer        | `src/renderer/src/switch.js` | Renders cards, debounces toggles (500 ms), refreshes state every 5 s with an in-flight guard                                                                                                                                              |
 | Renderer        | `src/renderer/src/config.js` | Export / import the configuration as JSON                                                                                                                                                                                                 |
-| Renderer        | `src/renderer/src/delete.js` | Hover-to-reveal delete icon and confirm-then-remove                                                                                                                                                                                       |
+| Renderer        | `src/renderer/src/delete.js` | Plain × delete button, shown only in edit mode, with confirm-then-remove                                                                                                                                                                  |
 | Renderer        | `src/renderer/src/store.js`  | Load / save the list, with a one-time migration from the old IndexedDB store                                                                                                                                                              |
+| Renderer        | `src/renderer/src/notify.js` | Non-blocking toast messages and an in-page confirmation dialog                                                                                                                                                                            |
 
 The service name whitelist is enforced **in Rust**, not in the page: a Tauri frontend can call `invoke` directly, so the renderer's `SERVICE_NAME_PATTERN` is only an input hint. Both sides must stay in sync (see `src/shared/services.js`).
 
@@ -86,29 +88,31 @@ A service counts as running when SCM reports `dwCurrentState == SERVICE_RUNNING`
 
 - **Per-card switch** — custom-drawn toggle (a checkbox with styled slider); its `checked` state mirrors the service state, not the last click
 - **Keyboard accessible** — the toggle is a real focusable checkbox, and <kbd>Space</kbd> flips it (the styled slider doesn't do that on its own)
+- **Running-state indicator** — a short bar at the top of each card lengthens and turns sage-green while the service is running; the scrollbar is a low-contrast, borderless ink-grey strip that reserves its gutter so the grid never jumps
 - **Busy guard** — while a start / stop is running, further clicks on the same card are ignored, so state can't desynchronise
-- **Periodic state refresh** — every 5 seconds each card re-reads the real state; cards being toggled or already removed are skipped, and refresh never writes to disk
+- **Periodic state refresh** — every 5 seconds each card re-reads the real state; cards being toggled or already removed are skipped, an in-flight guard prevents overlapping refreshes, and refresh never writes to disk
 
 ### Adding and deleting
 
 - **Modal form** — label + service name, with an empty-value check; clicking the backdrop closes it
-- **Hover delay before delete** — 5000 ms of continuous hover reveals `×`, leaving the card hides it again
-- **Confirmation dialog** — deletion asks for the label first, then removes the card and persists the list
+- **Edit mode gates add/delete** — the `+` card and × buttons appear only after clicking 编辑; no hover delay
+- **Confirmation dialog** — an in-page dialog (not a blocking native `confirm`) asks for the label first, then removes the card and persists the list
+- **Non-blocking feedback** — errors surface as an auto-dismissing toast instead of `alert`, so the 5-second refresh timer is never stalled
 
 ### Storage
 
-- **Rust-side JSON file** — `app_data_dir()/services.json`, an array of `{ domName, serviceName, status }`; `isChanging` is runtime-only and never persisted
-- **Atomic write** — the file is written to `services.json.tmp` and renamed into place, so a crash can't leave a half-written list
+- **Rust-side JSON file** — `app_data_dir()/services.json`, an array of `{ domName, serviceName }`; the toggle state is never persisted, it is always read back from SCM
+- **Atomic write** — every save writes a unique temp file, `sync_all`s it and renames it into place, so concurrent saves can't collide and a crash can't leave a half-written list
 - **One-time migration** — an existing v0.2.x IndexedDB list is imported and the old database dropped
-- **No fallback data written to disk** — the default `mysql` card is only a first-run stand-in
-- **Export / import** — download a JSON backup or upload one; import checks the structure, legal service names and duplicates before saving
+- **Corrupt config is preserved** — if the JSON can't be parsed, Rust renames it to `services.json.bad-<timestamp>` and reports the error; no placeholder list is ever written over it
+- **Export / import** — download a JSON backup or upload one; import checks structure, field types / lengths, legal service names, duplicates, entry count and file size before saving
 
 ## FAQ
 
 <details>
 <summary><strong>Why does the app ask for elevation every time?</strong></summary>
 
-`StartServiceW` and `ControlService` require administrator rights. The app reads its own token at startup and, if it isn't elevated, relaunches itself with the Windows `runas` verb. That relaunch always triggers a UAC prompt; there is no way for a normal process to elevate without one. The check happens once and the UAC prompt is raised at most once per run.
+`StartServiceW` and `ControlService` require administrator rights. The app reads its own token at startup and, if it isn't elevated, relaunches itself with the Windows `runas` verb. That relaunch always triggers a UAC prompt; there is no way for a normal process to elevate without one. The check happens once; if the UAC prompt is declined, the **以管理员重启** button in the title bar lets you retry without restarting the app.
 
 </details>
 
@@ -129,7 +133,14 @@ State is re-read every 5 seconds, so a service started outside the app catches u
 <details>
 <summary><strong>Where are my cards stored?</strong></summary>
 
-In `services.json` under the app's data directory — `%APPDATA%\com.makabakax.service-settings\services.json` for a packaged build. Use **Export** to keep a backup; deleting the file resets the list to the first-run placeholder.
+In `services.json` under the app's data directory — `%APPDATA%\com.makabakax.service-settings\services.json` for a packaged build. Use **Export** to keep a backup; deleting the file leaves an empty list with an inline hint.
+
+</details>
+
+<details>
+<summary><strong>What if services.json is corrupt?</strong></summary>
+
+The app won't overwrite it with placeholder data. Rust renames the bad file to `services.json.bad-<timestamp>` in the same directory and shows a toast with the backup name. Import a JSON backup (or re-add the services); the original file is kept for recovery.
 
 </details>
 
@@ -143,7 +154,7 @@ v0.1.x was an Electron app whose Chromium profile is not the WebView2 profile us
 <details>
 <summary><strong>How do I back up or move my list?</strong></summary>
 
-Click **导出配置 / Export** at the bottom of the window to download `service-settings.json`. On the target machine click **导入配置 / Import**, pick that file, and the page reloads with the imported list. Import rejects malformed JSON, illegal service names and duplicate entries.
+Click **导出配置 / Export** in the title bar to download `service-settings.json`. On the target machine click **导入配置 / Import**, pick that file, and the page reloads with the imported list. Import rejects malformed JSON, illegal or over-long service names, empty / over-long labels, duplicates and oversized files.
 
 </details>
 

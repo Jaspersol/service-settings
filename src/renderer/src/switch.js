@@ -3,13 +3,19 @@ import { initDeleteIcons } from './delete'
 import { SERVICE_NAME_PATTERN, isDuplicateEntry } from '../../shared/services.js'
 import { serviceCommand } from './api'
 import { initConfigTools } from './config'
+import { initTitlebar } from './titlebar'
+import { notify } from './notify'
 
 // 当前服务列表：启动流程从配置文件读出后赋给这里，供各事件回调共享
-let list
+let list = []
 // 卡片开关与列表条目的对应关系，供定时刷新复用
 let rows = []
 // 状态刷新间隔（毫秒）
 const REFRESH_INTERVAL_MS = 5000
+// 防止上一轮刷新未结束就发起下一轮，避免 IPC 堆积
+let refreshing = false
+
+const MAX_SERVICE_NAME_LENGTH = 255
 
 /**
  * 防抖：间隔 timeout 毫秒内不再触发时才真正调用 func
@@ -27,7 +33,7 @@ function debounce(func, timeout = 500) {
   }
 }
 
-/** 把整个列表写回 Rust 侧的 services.json */
+/** 把整个列表写回 Rust 侧的 services.json（status 不落盘，Rust 只取 domName / serviceName） */
 function persistList() {
   return saveData(list)
 }
@@ -51,16 +57,22 @@ async function getStatus(serviceName) {
 
 /** 定时刷新卡片显示状态；跳过正在操作或已从 DOM 移除的卡片，不写盘 */
 async function refreshStatuses() {
-  rows = rows.filter(({ input }) => input.isConnected)
-  await Promise.all(
-    rows.map(async ({ item, input }) => {
-      if (!input.isConnected || item.isChanging) return
-      const status = await getStatus(item.serviceName)
-      if (!status.ok || item.isChanging || !input.isConnected) return
-      item.status = status.running
-      input.checked = status.running
-    })
-  )
+  if (refreshing) return
+  refreshing = true
+  try {
+    rows = rows.filter(({ input }) => input.isConnected)
+    await Promise.all(
+      rows.map(async ({ item, input }) => {
+        if (!input.isConnected || item.isChanging) return
+        const status = await getStatus(item.serviceName)
+        if (!status.ok || item.isChanging || !input.isConnected) return
+        item.status = status.running
+        input.checked = status.running
+      })
+    )
+  } finally {
+    refreshing = false
+  }
 }
 
 /**
@@ -116,7 +128,8 @@ function addEventListenerService(input, item) {
 }
 
 /**
- * 处理开关切换：通过 SCM 启停服务，命令成功后才改状态与持久化
+ * 处理开关切换：通过 SCM 启停服务，命令成功后才改显示状态。
+ * 列表内容没变，不需要写盘；status 只是内存里的缓存，由定时刷新纠正。
  * @param {HTMLElement} input 开关元素
  * @param {{serviceName: string, status: boolean, isChanging: boolean}} item 对应的列表条目
  */
@@ -142,19 +155,16 @@ async function changeSwitch(input, item) {
     input.checked = item.status
     item.isChanging = false
     input.disabled = false
-    alert(`${target ? '启动' : '停止'}服务失败：${(res && res.message) || '未知错误'}`)
+    notify(`${target ? '启动' : '停止'}服务失败：${(res && res.message) || '未知错误'}`, 'error')
     return
   }
 
+  // SCM 的控制请求是异步的：这里只更新显示，真实状态由 5 秒刷新读回。
+  // 磁盘只存服务清单，不存状态，避免「上次点击目标」被当成真实状态持久化。
   item.status = target
   input.checked = target
   item.isChanging = false
   input.disabled = false
-  try {
-    await persistList()
-  } catch (err) {
-    alert(`保存状态失败：${err.message}`)
-  }
 }
 
 /**
@@ -170,9 +180,22 @@ function initList() {
     container.insertBefore(card, cardAdd)
     return { item, input: card.querySelector('.toggle-input') }
   })
+  // 先绑定事件再发起状态查询，避免启动期间出现「能看不能点」的死区
+  cardRows.forEach(({ item, input }) => addEventListenerService(input, item))
   initDeleteIcons(list)
   showmodelJsAdd()
   return cardRows
+}
+
+/** 编辑模式：显示加号卡片与删除叉号，按钮在「编辑 / 完成」间切换 */
+function initEditMode() {
+  const btn = document.getElementById('editBtn')
+  btn.addEventListener('click', () => {
+    const editing = document.body.classList.toggle('editing')
+    btn.classList.toggle('is-active', editing)
+    btn.setAttribute('aria-pressed', String(editing))
+    btn.textContent = editing ? '完成' : '编辑'
+  })
 }
 
 /** 为「新增服务」弹框的各按钮绑定事件 */
@@ -199,15 +222,19 @@ function showmodelJsAdd() {
     const serviceName = serviceNameInput.value.trim()
 
     if (!nodeName || !serviceName) {
-      alert('节点名称和服务名称不能为空！')
+      notify('节点名称和服务名称不能为空！', 'error')
       return
     }
     if (!SERVICE_NAME_PATTERN.test(serviceName)) {
-      alert('服务名称只能包含字母、数字、下划线、点、$ 和连字符！')
+      notify('服务名称只能包含字母、数字、下划线、点、$ 和连字符！', 'error')
+      return
+    }
+    if (serviceName.length > MAX_SERVICE_NAME_LENGTH) {
+      notify(`服务名称过长（上限 ${MAX_SERVICE_NAME_LENGTH} 个字符）！`, 'error')
       return
     }
     if (isDuplicateEntry(list, nodeName, serviceName)) {
-      alert('该节点名称或服务名称已存在，请勿重复添加！')
+      notify('该节点名称或服务名称已存在，请勿重复添加！', 'error')
       return
     }
 
@@ -220,7 +247,7 @@ function showmodelJsAdd() {
       confirmBtn.disabled = false
     }
     if (!status.ok) {
-      alert(`无法查询服务 ${serviceName}：${status.message}`)
+      notify(`无法查询服务 ${serviceName}：${status.message}`, 'error')
       return
     }
 
@@ -248,7 +275,7 @@ function showmodelJsAdd() {
       list.pop()
       rows.pop()
       card.remove()
-      alert(`保存失败：${err.message}`)
+      notify(`保存失败：${err.message}`, 'error')
     }
   })
 
@@ -261,25 +288,33 @@ function showmodelJsAdd() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const fallback = [{ domName: 'mysql', serviceName: 'MySQL84' }]
   try {
-    const stored = await loadData()
-    // 配置文件不存在或为空时给一个默认服务兜底
-    list = stored.length > 0 ? stored : fallback
+    list = await loadData()
   } catch (err) {
-    alert(`读取配置失败：${err}`)
-    list = fallback
+    const message = String(err?.message || err)
+    // 配置损坏时 Rust 已把原文件备份，这里只提示、不写假数据覆盖
+    notify(
+      message.includes('配置损坏')
+        ? `${message}。请导入备份文件，或重新添加服务`
+        : `读取配置失败：${message}`,
+      'error'
+    )
+    list = []
   }
 
   rows = initList()
-  // 逐张查询真实状态：新增的卡片与重启后的卡片都以服务真实状态为准
-  for (const { item, input } of rows) {
-    const status = await getStatus(item.serviceName)
-    item.status = status.ok ? status.running : false
-    addEventListenerService(input, item)
-  }
+  // 并行查询真实状态：新增的卡片与重启后的卡片都以服务真实状态为准
+  await Promise.all(
+    rows.map(async ({ item, input }) => {
+      const status = await getStatus(item.serviceName)
+      item.status = status.ok ? status.running : false
+      input.checked = item.status
+    })
+  )
 
   initConfigTools()
+  initTitlebar()
+  initEditMode()
   // 定期刷新，反映在应用之外被启停的服务
   setInterval(refreshStatuses, REFRESH_INTERVAL_MS)
 })

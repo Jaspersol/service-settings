@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -6,7 +7,7 @@ use tauri::Manager;
 #[cfg(windows)]
 use std::ffi::c_void;
 #[cfg(windows)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 #[cfg(windows)]
 use std::sync::LazyLock;
 #[cfg(windows)]
@@ -35,12 +36,15 @@ const INVALID_NAME_MESSAGE: &str = "服务名称不合法";
 #[cfg(not(windows))]
 const UNSUPPORTED_PLATFORM_MESSAGE: &str = "不支持此平台：服务控制仅在 Windows 上可用";
 #[cfg(windows)]
-const NOT_ELEVATED_MESSAGE: &str = "权限不足，请以管理员身份重新启动本程序";
+const NOT_ELEVATED_MESSAGE: &str = "权限不足，请点击标题栏的「以管理员重启」按钮重新启动程序";
 
 #[cfg(windows)]
 static ELEVATION_REQUESTED: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
 static IS_ELEVATED: LazyLock<bool> = LazyLock::new(detect_elevation);
+
+// 每次写盘用唯一临时文件名，避免多个并发保存共用同一个 tmp 互相踩
+static SAVE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 const CONFIG_FILE: &str = "services.json";
 
@@ -74,20 +78,21 @@ impl CommandResult {
     }
 }
 
-/// 持久化在服务配置文件里的一条服务记录。isChanging 属于运行时状态，不落盘。
-#[derive(Serialize, Deserialize, Clone)]
+/// 服务清单里的一条记录。开关状态不落盘：它是运行时缓存，
+/// 启动时与每 5 秒刷新都从 SCM 读回，写进文件只会让它与真实状态漂移。
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ServiceEntry {
     dom_name: String,
     service_name: String,
-    status: bool,
 }
 
 /// 与 src/shared/services.js 的 SERVICE_NAME_PATTERN 保持一致。
 /// JS 的 \w 在无 u flag 时只匹配 ASCII，因此这里显式限定 ASCII，
-/// 避免中文服务名在两侧判定不一致。
+/// 避免中文服务名在两侧判定不一致；同时限制在 Win32 服务名上限 255 字符内。
 fn valid_service_name(name: &str) -> bool {
     !name.is_empty()
+        && name.len() <= 255
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'$' | b'-'))
@@ -97,29 +102,71 @@ fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
-/// 读取服务列表；配置文件不存在时返回空数组，由前端给出首跑占位数据。
+/// 读取服务列表；配置文件不存在时返回空数组。
+/// 解析失败时先把损坏文件改名备份，绝不让调用方用占位数据覆盖它。
 #[tauri::command]
 fn load_services(app: tauri::AppHandle) -> Result<Vec<ServiceEntry>, String> {
-    let path = config_dir(&app)?.join(CONFIG_FILE);
+    load_services_from_path(&config_dir(&app)?.join(CONFIG_FILE))
+}
+
+/// 与 AppHandle 解耦，便于测试损坏文件的备份行为。
+fn load_services_from_path(path: &Path) -> Result<Vec<ServiceEntry>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    // 旧版 / 手工编辑的文件可能带 isChanging 等额外字段，serde 默认忽略未知字段
-    serde_json::from_str(&text).map_err(|e| e.to_string())
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    // 旧版 / 手工编辑的文件可能带 status / isChanging 等额外字段，serde 默认忽略
+    match serde_json::from_str::<Vec<ServiceEntry>>(&text) {
+        Ok(list) => Ok(list),
+        Err(err) => {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let backup = path.with_file_name(format!(
+                "{}.bad-{}",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                ts
+            ));
+            // 备份失败也要把解析错误报出去，不能静默吞掉
+            let _ = std::fs::rename(path, &backup);
+            Err(format!(
+                "配置损坏：{}；原文件已备份为 {}",
+                err,
+                backup.file_name().unwrap_or_default().to_string_lossy()
+            ))
+        }
+    }
 }
 
-/// 整体写入服务列表：先写同目录临时文件再原子替换，避免写一半损坏配置。
+/// 整体写入服务列表：唯一临时文件 + fsync + 原子替换。
 #[tauri::command]
 fn save_services(app: tauri::AppHandle, list: Vec<ServiceEntry>) -> Result<(), String> {
-    let dir = config_dir(&app)?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    save_services_to_dir(&config_dir(&app)?, &list)
+}
+
+/// 与 AppHandle 解耦；并发调用各自用不同的临时文件，不会互相覆盖。
+fn save_services_to_dir(dir: &Path, list: &[ServiceEntry]) -> Result<(), String> {
+    use std::io::Write;
+
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join(CONFIG_FILE);
-    let tmp = dir.join(format!("{CONFIG_FILE}.tmp"));
-    let json = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-    Ok(())
+    let seq = SAVE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!("{CONFIG_FILE}.{}.{}.tmp", std::process::id(), seq));
+    let json = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
+
+    let result = std::fs::File::create(&tmp)
+        .map_err(|e| e.to_string())
+        .and_then(|mut f| {
+            f.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
+            f.sync_all().map_err(|e| e.to_string())
+        })
+        .and_then(|_| std::fs::rename(&tmp, &path).map_err(|e| e.to_string()));
+    if result.is_err() {
+        // 写盘或 rename 失败时清掉临时文件，避免残留
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// 把 Win32 错误码映射成可读中文；其余交给系统本地化消息
@@ -218,12 +265,13 @@ fn detect_elevation() -> bool {
 }
 
 /// 以 runas 重启自身。返回 true 表示已成功发起，调用方应立即退出；
-/// 用户拒绝 UAC 时 ShellExecuteW 返回 <= 32，此时不退出，窗口继续可用。
+/// 用户拒绝 UAC 时 ShellExecuteW 返回 <= 32，此时标志不置位，允许再次重试。
 #[cfg(windows)]
 fn restart_as_admin() -> bool {
     use std::os::windows::ffi::OsStrExt;
 
-    if ELEVATION_REQUESTED.swap(true, Ordering::SeqCst) {
+    // 只有真正成功发起过提权才锁住，避免拒绝 UAC 后再也弹不出来
+    if ELEVATION_REQUESTED.load(Ordering::SeqCst) {
         return false;
     }
     let Ok(exe) = std::env::current_exe() else {
@@ -244,7 +292,41 @@ fn restart_as_admin() -> bool {
             SW_SHOWNORMAL,
         )
     };
-    result.0 as usize > 32
+    let launched = result.0 as usize > 32;
+    if launched {
+        ELEVATION_REQUESTED.store(true, Ordering::SeqCst);
+    }
+    launched
+}
+
+/// 前端据此决定标题栏是否显示「以管理员重启」。
+#[cfg(windows)]
+#[tauri::command]
+fn elevation_status() -> bool {
+    is_elevated()
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn elevation_status() -> bool {
+    false
+}
+
+/// 用户主动重试提权；成功时结束当前进程，由 runas 启动的新进程接管。
+#[cfg(windows)]
+#[tauri::command]
+fn elevate(app: tauri::AppHandle) -> bool {
+    if restart_as_admin() {
+        app.exit(0);
+        return true;
+    }
+    false
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn elevate(_app: tauri::AppHandle) -> bool {
+    false
 }
 
 #[tauri::command]
@@ -289,7 +371,7 @@ pub fn run() {
             #[cfg(windows)]
             {
                 // 启动时检测一次；未提权最多发起一次自我重启。
-                // 用户拒绝 UAC 时不退出，窗口照常打开，启停命令会返回权限错误。
+                // 用户拒绝 UAC 时不退出，窗口照常打开，标题栏保留重试入口。
                 if !is_elevated() && restart_as_admin() {
                     std::process::exit(0);
                 }
@@ -302,7 +384,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             service_command,
             load_services,
-            save_services
+            save_services,
+            elevation_status,
+            elevate
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -311,6 +395,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "service-settings-test-{}-{}",
+            name,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     #[test]
     fn rejects_injection_attempts() {
@@ -323,15 +418,20 @@ mod tests {
     }
 
     #[test]
-    fn service_entry_uses_camel_case_fields() {
+    fn rejects_overlong_service_name() {
+        assert!(valid_service_name(&"a".repeat(255)));
+        assert!(!valid_service_name(&"a".repeat(256)));
+    }
+
+    #[test]
+    fn service_entry_does_not_persist_status() {
         let entry = ServiceEntry {
             dom_name: "mysql".into(),
             service_name: "MySQL84".into(),
-            status: true,
         };
         assert_eq!(
             serde_json::to_value(&entry).unwrap(),
-            serde_json::json!({ "domName": "mysql", "serviceName": "MySQL84", "status": true })
+            serde_json::json!({ "domName": "mysql", "serviceName": "MySQL84" })
         );
     }
 
@@ -343,6 +443,60 @@ mod tests {
         .unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].service_name, "MySQL84");
+    }
+
+    #[test]
+    fn corrupted_config_is_backed_up() {
+        let dir = temp_test_dir("corrupt");
+        let path = dir.join(CONFIG_FILE);
+        std::fs::write(&path, "{ not json").unwrap();
+
+        let err = load_services_from_path(&path).expect_err("must fail");
+        assert!(err.starts_with("配置损坏"), "unexpected: {err}");
+        assert!(!path.exists(), "corrupt file should be moved away");
+
+        let backups: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("services.json.bad-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_saves_keep_config_valid() {
+        let dir = temp_test_dir("concurrent");
+        let a = vec![ServiceEntry {
+            dom_name: "a".into(),
+            service_name: "SvcA".into(),
+        }];
+        let b = vec![ServiceEntry {
+            dom_name: "b".into(),
+            service_name: "SvcB".into(),
+        }];
+        std::thread::scope(|s| {
+            s.spawn(|| save_services_to_dir(&dir, &a).unwrap());
+            s.spawn(|| save_services_to_dir(&dir, &b).unwrap());
+        });
+
+        // 无论谁最后 rename，配置文件都必须是完整合法的 JSON
+        let text = std::fs::read_to_string(dir.join(CONFIG_FILE)).unwrap();
+        let parsed: Vec<ServiceEntry> =
+            serde_json::from_str(&text).expect("config must stay valid JSON");
+        assert_eq!(parsed.len(), 1);
+
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[cfg(windows)]

@@ -1,20 +1,150 @@
-.toolbar {
+/* 自定义标题栏：背景完全透明，与 body 渐变同色，不设任何边框或分隔线 */
+.titlebar {
+  position: relative;
+  z-index: 20;
   display: flex;
-  gap: 12px;
-  justify-content: center;
-  padding: 16px 0 8px;
-}
-
-.btn-tool {
-  padding: 8px 16px;
-  border: 1px solid rgba(0, 0, 0, 0.15);
-  border-radius: 8px;
+  align-items: center;
+  height: 44px;
+  padding: 0 8px 0 18px;
   background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
+  border: 0;
+  box-shadow: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.btn-tool:hover {
-  background: rgba(0, 0, 0, 0.05);
+.titlebar-brand,
+.titlebar-drag {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.titlebar-brand {
+  gap: 10px;
+  flex: none;
+}
+
+.titlebar-drag {
+  flex: 1;
+}
+
+.titlebar-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, var(--accent-soft), var(--accent-deep));
+  box-shadow: 0 0 0 3px rgba(127, 167, 158, 0.16);
+}
+
+.titlebar-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+
+.titlebar-sub {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.titlebar-tools,
+.titlebar-window {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.titlebar-tool {
+  padding: 5px 11px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.titlebar-tool:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.titlebar-tool-edit.is-active {
+  color: var(--accent-deep);
+  background: rgba(127, 167, 158, 0.14);
+}
+
+.titlebar-btn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.titlebar-btn svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+.titlebar-btn:hover {
+  background: rgba(120, 136, 164, 0.12);
+  color: var(--ink);
+}
+
+.titlebar-btn-close:hover {
+  background: rgba(186, 106, 106, 0.14);
+  color: #a85a5a;
+}
+
+/* ---------- 编辑模式：加号卡片与删除叉号只在此模式出现 ---------- */
+
+.card-add {
+  display: none;
+}
+
+body.editing .card-add {
+  display: flex;
+}
+
+body.editing .delete-icon {
+  display: flex;
+}
+
+/* 未提权时才显示「以管理员重启」 */
+.titlebar-tool[hidden] {
+  display: none;
+}
+.titlebar-tool-elevate {
+  color: var(--accent-deep);
 }
