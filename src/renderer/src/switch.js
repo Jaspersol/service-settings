@@ -1,9 +1,15 @@
-import { loadData, updateData } from './store'
+import { loadData, saveData } from './store'
 import { initDeleteIcons } from './delete'
 import { SERVICE_NAME_PATTERN, isDuplicateEntry } from '../../shared/services.js'
+import { serviceCommand } from './api'
+import { initConfigTools } from './config'
 
-// 当前服务列表：启动流程从数据库读出后赋给这里，供各事件回调共享
+// 当前服务列表：启动流程从配置文件读出后赋给这里，供各事件回调共享
 let list
+// 卡片开关与列表条目的对应关系，供定时刷新复用
+let rows = []
+// 状态刷新间隔（毫秒）
+const REFRESH_INTERVAL_MS = 5000
 
 /**
  * 防抖：间隔 timeout 毫秒内不再触发时才真正调用 func
@@ -21,22 +27,19 @@ function debounce(func, timeout = 500) {
   }
 }
 
-/** 把整个列表写回数据库（id 为 1 的单例记录） */
+/** 把整个列表写回 Rust 侧的 services.json */
 function persistList() {
-  return updateData({
-    id: 1,
-    data: list
-  })
+  return saveData(list)
 }
 
 /**
- * 查询服务真实状态，由主进程执行 sc query
+ * 查询服务真实状态，由 Rust 命令层通过 SCM 读取
  * @param {string} serviceName 服务名称
  * @returns {Promise<{ok: boolean, running: boolean, message?: string}>} 查询结果
  */
 async function getStatus(serviceName) {
   try {
-    const res = await window.api.serviceCommand('status', serviceName)
+    const res = await serviceCommand('status', serviceName)
     if (!res || res.success !== true) {
       return { ok: false, running: false, message: (res && res.message) || '查询失败' }
     }
@@ -44,6 +47,20 @@ async function getStatus(serviceName) {
   } catch (err) {
     return { ok: false, running: false, message: err.message }
   }
+}
+
+/** 定时刷新卡片显示状态；跳过正在操作或已从 DOM 移除的卡片，不写盘 */
+async function refreshStatuses() {
+  rows = rows.filter(({ input }) => input.isConnected)
+  await Promise.all(
+    rows.map(async ({ item, input }) => {
+      if (!input.isConnected || item.isChanging) return
+      const status = await getStatus(item.serviceName)
+      if (!status.ok || item.isChanging || !input.isConnected) return
+      item.status = status.running
+      input.checked = status.running
+    })
+  )
 }
 
 /**
@@ -99,7 +116,7 @@ function addEventListenerService(input, item) {
 }
 
 /**
- * 处理开关切换：通过 net start / net stop 启停服务，命令成功后才改状态与持久化
+ * 处理开关切换：通过 SCM 启停服务，命令成功后才改状态与持久化
  * @param {HTMLElement} input 开关元素
  * @param {{serviceName: string, status: boolean, isChanging: boolean}} item 对应的列表条目
  */
@@ -116,9 +133,10 @@ async function changeSwitch(input, item) {
   item.isChanging = true
   input.disabled = true
 
-  const res = await window.api
-    .serviceCommand(target ? 'start' : 'stop', item.serviceName)
-    .catch((err) => ({ success: false, message: err.message }))
+  const res = await serviceCommand(target ? 'start' : 'stop', item.serviceName).catch((err) => ({
+    success: false,
+    message: err.message
+  }))
   if (!res || res.success !== true) {
     // 失败时把开关拨回持久化的状态，并把错误告诉用户
     input.checked = item.status
@@ -146,7 +164,7 @@ async function changeSwitch(input, item) {
 function initList() {
   const container = document.getElementById('container')
   const cardAdd = container.querySelector('.card-add')
-  const rows = list.map((item) => {
+  const cardRows = list.map((item) => {
     item.isChanging = false
     const card = createCard(item)
     container.insertBefore(card, cardAdd)
@@ -154,7 +172,7 @@ function initList() {
   })
   initDeleteIcons(list)
   showmodelJsAdd()
-  return rows
+  return cardRows
 }
 
 /** 为「新增服务」弹框的各按钮绑定事件 */
@@ -217,15 +235,18 @@ function showmodelJsAdd() {
     const container = document.getElementById('container')
     const card = createCard(item)
     container.insertBefore(card, container.querySelector('.card-add'))
-    addEventListenerService(card.querySelector('.toggle-input'), item)
+    const input = card.querySelector('.toggle-input')
+    addEventListenerService(input, item)
+    rows.push({ item, input })
     initDeleteIcons(list)
     myModal.style.display = 'none'
 
     try {
       await persistList()
     } catch (err) {
-      // 写库失败则回滚，界面与存储保持一致
+      // 写盘失败则回滚，界面与存储保持一致
       list.pop()
+      rows.pop()
       card.remove()
       alert(`保存失败：${err.message}`)
     }
@@ -240,16 +261,25 @@ function showmodelJsAdd() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const listDB = await loadData()
-  if (listDB) list = listDB.data
-  // 首次运行时数据库还没有约定好的 id 1 记录，给一个默认服务兜底
-  else list = [{ domName: 'mysql', serviceName: 'MySQL84' }]
+  const fallback = [{ domName: 'mysql', serviceName: 'MySQL84' }]
+  try {
+    const stored = await loadData()
+    // 配置文件不存在或为空时给一个默认服务兜底
+    list = stored.length > 0 ? stored : fallback
+  } catch (err) {
+    alert(`读取配置失败：${err}`)
+    list = fallback
+  }
 
-  const rows = initList()
+  rows = initList()
   // 逐张查询真实状态：新增的卡片与重启后的卡片都以服务真实状态为准
   for (const { item, input } of rows) {
     const status = await getStatus(item.serviceName)
     item.status = status.ok ? status.running : false
     addEventListenerService(input, item)
   }
+
+  initConfigTools()
+  // 定期刷新，反映在应用之外被启停的服务
+  setInterval(refreshStatuses, REFRESH_INTERVAL_MS)
 })

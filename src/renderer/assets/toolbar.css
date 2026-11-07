@@ -1,0 +1,20 @@
+.toolbar {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  padding: 16px 0 8px;
+}
+
+.btn-tool {
+  padding: 8px 16px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn-tool:hover {
+  background: rgba(0, 0, 0, 0.05);
+}

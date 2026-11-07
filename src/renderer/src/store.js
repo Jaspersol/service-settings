@@ -1,72 +1,70 @@
-// TestDB 数据库里只有一个对象库 config，以 id 为主键存放多条记录。
-//
-// 约定：服务列表统一存在 id 为 1 的单例记录里，saveData / loadData / updateData 都按 id 1 读写。
+import { invoke } from '@tauri-apps/api/core'
+
+// 服务列表存于 Rust 侧的 app_data_dir()/services.json，
+// 不再依赖 WebView2 的 IndexedDB（见 src-tauri/src/lib.rs）。
 
 /**
- * 打开 TestDB 数据库；首次打开时创建 config 对象库并以 id 为主键
- * @returns {Promise<IDBDatabase>} 已连接的数据库实例
+ * 整体写入服务列表（Rust 侧先写临时文件再原子替换）
+ * @param {Array} list 服务列表
+ * @returns {Promise<void>}
  */
-export function openDB() {
-  return new Promise((resolve, reject) => {
+export function saveData(list) {
+  return invoke('save_services', { list })
+}
+
+/** v0.2.x 把列表存在 IndexedDB 的 TestDB / config / id=1 */
+async function readLegacyList() {
+  // 先确认数据库存在，避免 indexedDB.open 反过来创建一个空库
+  if (typeof indexedDB.databases !== 'function') return null
+  const databases = await indexedDB.databases().catch(() => [])
+  if (!databases.some((db) => db.name === 'TestDB')) return null
+
+  return new Promise((resolve) => {
     const request = indexedDB.open('TestDB', 1)
-    request.onupgradeneeded = (e) => {
+    request.onerror = () => resolve(null)
+    request.onsuccess = (e) => {
       const db = e.target.result
-      // 创建对象存储（表）
       if (!db.objectStoreNames.contains('config')) {
-        db.createObjectStore('config', { keyPath: 'id' })
+        db.close()
+        resolve(null)
+        return
+      }
+      const get = db.transaction('config', 'readonly').objectStore('config').get(1)
+      get.onsuccess = () => {
+        const record = get.result
+        db.close()
+        resolve(record && Array.isArray(record.data) ? record.data : null)
+      }
+      get.onerror = () => {
+        db.close()
+        resolve(null)
       }
     }
-    request.onsuccess = (e) => resolve(e.target.result)
-    request.onerror = (e) => reject(e.target.error)
+  })
+}
+
+/** 迁移成功后删掉旧库，避免以后清空列表时又被「复活」 */
+function dropLegacyDatabase() {
+  return new Promise((resolve) => {
+    const request = indexedDB.deleteDatabase('TestDB')
+    request.onsuccess = () => resolve()
+    request.onerror = () => resolve()
+    request.onblocked = () => resolve()
   })
 }
 
 /**
- * 整体写入 id 为 1 的单例记录（不存在则插入，存在则整条覆盖）。
- * @param {Array} list 服务列表
- * @returns {Promise<void>} 事务提交后 resolve
- */
-export async function saveData(list) {
-  const db = await openDB()
-  const tx = db.transaction('config', 'readwrite')
-  const store = tx.objectStore('config')
-  // 用 put 而非 add：id 1 的记录第二次保存时已存在，add 会抛 ConstraintError
-  store.put({ id: 1, data: list })
-  return new Promise((resolve) => (tx.oncomplete = resolve))
-}
-
-/**
- * 读取 id 为 1 的单例记录。记录不存在时返回 undefined，
- * 默认值由调用方决定（见 switch.js 的首次运行兜底数据）
- * @returns {Promise<{id: number, data: Array}|undefined>} 设置记录
+ * 读取服务列表；配置文件不存在时返回空数组，由调用方给出首跑占位数据。
+ * 若 Rust 侧还没有配置文件、但存在 v0.2.x 的 IndexedDB 列表，则一次性迁移。
+ * @returns {Promise<Array<{domName: string, serviceName: string, status: boolean}>>}
  */
 export async function loadData() {
-  const db = await openDB()
-  const tx = db.transaction('config', 'readonly')
-  const store = tx.objectStore('config')
-  const request = store.get(1)
-  return new Promise((resolve) => {
-    request.onsuccess = (e) => resolve(e.target.result)
-  })
-}
+  const list = await invoke('load_services')
+  if (list.length > 0) return list
 
-/**
- * 按主键 put：id 为 1 的记录存在则整条覆盖，不存在则插入。
- * 传入对象必须自带 id，否则 put 会抛错
- * @param {{id: number, data: Array}} data 完整设置记录
- * @returns {Promise<IDBValidKey>} 写入记录的主键
- */
-export async function updateData(data) {
-  const db = await openDB()
-  const tx = db.transaction('config', 'readwrite')
-  const store = tx.objectStore('config')
-  const request = store.put(data)
-  return new Promise((resolve, reject) => {
-    request.onsuccess = (e) => {
-      resolve(e.target.result)
-    }
-    request.onerror = (e) => {
-      reject(e.target.error)
-    }
-  })
+  const legacy = await readLegacyList()
+  if (!legacy || legacy.length === 0) return list
+  await saveData(legacy)
+  await dropLegacyDatabase()
+  return legacy
 }

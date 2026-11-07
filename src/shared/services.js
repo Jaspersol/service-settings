@@ -1,23 +1,11 @@
-// 主进程与渲染进程共用的服务名校验和列表查找逻辑，
-// 两边必须用同一套规则，避免分歧。
+// 渲染进程侧的列表查找与 UI 即时校验。
+//
+// 安全边界在 Rust 命令层：Tauri 里前端可以直接 invoke，服务名与操作白名单
+// 由 src-tauri/src/lib.rs 独立校验；这里的校验只是输入提示，绝不能当作防线。
+// 两处规则必须同步：下面的 SERVICE_NAME_PATTERN 对应 Rust 的 SERVICE_NAME_RE。
 
 // 服务名只允许字母、数字、下划线、点、美元符号和连字符
 export const SERVICE_NAME_PATTERN = /^[\w.$-]+$/
-
-// 允许的 IPC 操作：查询状态、启动、停止
-export const SERVICE_ACTIONS = ['status', 'start', 'stop']
-
-// sc query 的输出里，运行中状态为「STATE : 4  RUNNING」
-export const RUNNING_PATTERN = /\b4\s+RUNNING\b/
-
-/**
- * 校验服务名是否安全可执行
- * @param {unknown} name 服务名
- * @returns {boolean} 是否合法
- */
-export function isValidServiceName(name) {
-  return typeof name === 'string' && SERVICE_NAME_PATTERN.test(name)
-}
 
 /**
  * 比较用的规范化键：Windows 服务名不区分大小写

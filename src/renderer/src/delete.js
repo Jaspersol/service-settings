@@ -1,4 +1,4 @@
-import { updateData } from './store'
+import { saveData } from './store'
 import { findServiceIndex, removeService } from '../../shared/services.js'
 
 // 鼠标悬停多久后才显示删除图标（毫秒）。
@@ -12,14 +12,14 @@ let hoverTimer = null
  * 找不到条目时不做任何修改（返回 'not-found'），绝不会让 -1 变成删除下标。
  * @param {Array} list 服务列表（原地修改）
  * @param {string} serviceName 服务名称
- * @param {(data: {id: number, data: Array}) => Promise<unknown>} [persist] 持久化函数
+ * @param {(list: Array) => Promise<unknown>} [persist] 持久化函数
  * @returns {Promise<'removed'|'not-found'|'persist-failed'>} 处理结果
  */
-export async function removeEntry(list, serviceName, persist = updateData) {
+export async function removeEntry(list, serviceName, persist = saveData) {
   const removed = removeService(list, serviceName)
   if (!removed) return 'not-found'
   try {
-    await persist({ id: 1, data: list })
+    await persist(list)
   } catch {
     // 写库失败则回滚列表，调用方据此保留卡片
     list.splice(removed.index, 0, removed.item)

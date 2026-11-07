@@ -3,12 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <title>ServiceSettings</title>
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
-    />
 
     <link href="./assets/main.css" type="text/css" rel="stylesheet" />
+    <link href="./assets/toolbar.css" type="text/css" rel="stylesheet" />
   </head>
 
   <body>
@@ -34,7 +31,11 @@
         </div>
       </div>
     </div>
+    <div class="toolbar">
+      <button class="btn-tool" id="exportBtn">导出配置</button>
+      <button class="btn-tool" id="importBtn">导入配置</button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden />
+    </div>
     <script type="module" src="./src/switch.js"></script>
-    <script type="module" src="./src/renderer.js"></script>
   </body>
 </html>
