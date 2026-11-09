@@ -1,6 +1,6 @@
 [package]
 name = "service-settings"
-version = "0.3.0"
+version = "0.3.1"
 description = "服务设置"
 authors = ["makabakax"]
 edition = "2021"
