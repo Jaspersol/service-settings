@@ -4,7 +4,7 @@ version = "0.3.0"
 description = "服务设置"
 authors = ["makabakax"]
 edition = "2021"
-rust-version = "1.80.0"
+rust-version = "1.85.0"
 
 [lib]
 name = "service_settings_lib"
@@ -17,6 +17,10 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["time", "rt", "macros"] }
+sha2 = "0.10"
+semver = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [

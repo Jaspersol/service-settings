@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+mod update;
+
 #[cfg(windows)]
 use std::ffi::c_void;
 #[cfg(windows)]
@@ -364,6 +366,32 @@ fn service_command(action: Option<String>, name: Option<String>) -> CommandResul
     }
 }
 
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<update::UpdateInfo, String> {
+    update::check(&app).await
+}
+
+/// 启动时调用：Rust 侧按 6 小时间隔节流，失败返回 None（不打扰用户）。
+#[tauri::command]
+async fn auto_check_update(app: tauri::AppHandle) -> Result<Option<update::UpdateInfo>, String> {
+    update::auto_check(&app).await
+}
+
+#[tauri::command]
+fn last_update_result() -> Option<update::UpdateInfo> {
+    update::last_result()
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    update::install_latest(app).await
+}
+
+#[tauri::command]
+fn open_release_page(url: String) -> Result<(), String> {
+    update::open_release_page(&url)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -386,7 +414,12 @@ pub fn run() {
             load_services,
             save_services,
             elevation_status,
-            elevate
+            elevate,
+            check_update,
+            auto_check_update,
+            last_update_result,
+            install_update,
+            open_release_page
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

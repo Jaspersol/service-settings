@@ -3,6 +3,7 @@ import { initDeleteIcons } from './delete'
 import { SERVICE_NAME_PATTERN, isDuplicateEntry } from '../../shared/services.js'
 import { serviceCommand } from './api'
 import { initConfigTools } from './config'
+import { initUpdates } from './update'
 import { initTitlebar } from './titlebar'
 import { notify } from './notify'
 
@@ -313,6 +314,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   )
 
   initConfigTools()
+  initUpdates()
   initTitlebar()
   initEditMode()
   // 定期刷新，反映在应用之外被启停的服务

@@ -87,6 +87,22 @@
   border-color: rgba(76, 111, 255, 0.28);
 }
 
+/* 检查更新：有新版时右上角显示红点 */
+.titlebar-tool-update {
+  position: relative;
+}
+.titlebar-tool-update.has-update::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--surface);
+  border-radius: 50%;
+  background: var(--danger);
+}
+
 /* 「编辑」作为标题栏的主操作：淡蓝底蓝字 */
 .titlebar-tool-edit {
   color: var(--accent-ink);

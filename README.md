@@ -29,6 +29,7 @@ English | [中文](README_ZH.md)
 - **Elevation handled once** — the app checks its token at startup and relaunches itself with the Windows `runas` verb if it isn't elevated; if UAC is declined, a 以管理员重启 button stays in the title bar so elevation can be retried without restarting the app
 - **The list survives restarts** — cards are stored in a JSON file managed by the Rust backend
 - **Back up and move your list** — export / import the configuration as a JSON file, from the buttons in the title bar
+- **Update from the app** — checks GitHub Releases, downloads the NSIS installer, verifies its SHA256 and installs it; if `api.github.com` is rate-limited or unreachable, the check and the download fall back to plain `github.com` release pages and direct asset URLs
 - **Frameless window** — the in-page title bar is white with a thin divider, above a white rounded panel with blue accents; drag it to move the window and use its minimize / maximize / close buttons
 - **Editing is explicit** — the `+` card and delete × only appear in edit mode (the 编辑 / 完成 button in the title bar), so a stray click can't remove a service
 
@@ -71,7 +72,9 @@ With no configuration yet the list is empty and shows an inline hint; click 编�
 | --------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Rust commands   | `src-tauri/src/lib.rs`       | Validates `action` / `name`, calls Win32 SCM (`OpenSCManagerW` / `OpenServiceW` / `QueryServiceStatusEx` / `StartServiceW` / `ControlService`), maps Win32 error codes, checks elevation via `TokenElevation` and relaunches with `runas` |
 | Rust storage    | `src-tauri/src/lib.rs`       | `load_services` / `save_services` read and atomically write `app_data_dir()/services.json`                                                                                                                                                |
+| Rust updater    | `src-tauri/src/update.rs`    | GitHub Releases API check with a plain-`github.com` fallback, SHA256-verified installer download, silent NSIS install                                                                                                                     |
 | Frontend bridge | `src/renderer/src/api.js`    | `invoke` wrappers for service commands, elevation status and elevation restart                                                                                                                                                            |
+| Renderer        | `src/renderer/src/update.js` | Update check / install dialog, download progress and "new version" badge                                                                                                                                                                  |
 | Renderer        | `src/renderer/src/switch.js` | Renders cards, debounces toggles (500 ms), refreshes state every 5 s with an in-flight guard                                                                                                                                              |
 | Renderer        | `src/renderer/src/config.js` | Export / import the configuration as JSON                                                                                                                                                                                                 |
 | Renderer        | `src/renderer/src/delete.js` | Plain × delete button, shown only in edit mode, with confirm-then-remove                                                                                                                                                                  |
@@ -159,6 +162,13 @@ Click **导出配置 / Export** in the title bar to download `service-settings.j
 </details>
 
 <details>
+<summary><strong>How do updates work?</strong></summary>
+
+The title-bar **检查更新** button asks the GitHub Releases API for the latest release. If the API is rate-limited or unavailable, the app reads the tag from the plain `releases/latest` redirect and the asset name plus `sha256:` digest from the release's asset HTML, then uses direct `github.com` download URLs. The installer is always checked against its SHA256 digest, required to start with the `MZ` header and capped at 512 MB before it is launched silently (`/S /UPDATE /R`). Start-up checks are throttled to once every 6 hours.
+
+</details>
+
+<details>
 <summary><strong>Does it work on macOS or Linux?</strong></summary>
 
 No. This build ships a Windows NSIS installer only, and the command layer is Windows-specific. On other platforms the service command returns an explicit "unsupported platform" error instead of trying to call Win32 SCM.
@@ -174,7 +184,7 @@ npm run build    # vite build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-**Tech stack**: Tauri 2 · Vite 7 · Rust (windows, serde) · plain ES modules + DOM (no framework) · JSON config · prettier + eslint
+**Tech stack**: Tauri 2 · Vite 7 · Rust (windows, reqwest, sha2, semver, serde) · plain ES modules + DOM (no framework) · JSON config · prettier + eslint
 
 ## License
 

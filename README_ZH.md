@@ -29,6 +29,7 @@
 - **提权只处理一次** —— 启动时检查进程令牌，未提权则用 Windows 的 `runas` 动词重启自己；若拒绝 UAC，标题栏会保留「以管理员重启」按钮，无需重启应用即可重试
 - **列表跨重启保留** —— 卡片存在 Rust 后端管理的 JSON 文件里
 - **可备份、可搬迁** —— 配置能从标题栏按钮导出 / 导入为 JSON 文件
+- **应用内更新** —— 检查 GitHub Releases、下载 NSIS 安装包、校验 SHA256 后静默安装；`api.github.com` 限流或不可达时，检查与下载会自动回退到普通 `github.com` 发布页与资产直链
 - **无边框窗口** —— 自绘标题栏为白底细分隔线，主体是白色圆角面板配蓝色强调色；拖动标题栏移动窗口，右侧是最小化 / 最大化 / 关闭按钮
 - **编辑才显形** —— 加号卡片与删除叉号只在编辑模式（标题栏的「编辑 / 完成」按钮）出现，误点不会删掉服务
 
@@ -71,7 +72,9 @@ npm run tauri build    # NSIS 安装包（x64）
 | --------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Rust 命令 | `src-tauri/src/lib.rs`       | 校验 `action` / `name`、调用 Win32 SCM（`OpenSCManagerW` / `OpenServiceW` / `QueryServiceStatusEx` / `StartServiceW` / `ControlService`）、映射 Win32 错误码、用 `TokenElevation` 判断提权并以 `runas` 自我重启 |
 | Rust 存储 | `src-tauri/src/lib.rs`       | `load_services` / `save_services` 读取并原子写入 `app_data_dir()/services.json`                                                                                                                                 |
+| Rust 更新 | `src-tauri/src/update.rs`    | GitHub Releases API 检查（失败时回退普通 `github.com` 页面）、SHA256 校验下载、NSIS 静默安装                                                                                                                    |
 | 前端桥接  | `src/renderer/src/api.js`    | 服务命令与提权状态 / 重启的 `invoke` 封装                                                                                                                                                                       |
+| 渲染进程  | `src/renderer/src/update.js` | 检查更新 / 安装弹窗、下载进度与「发现新版本」红点                                                                                                                                                               |
 | 渲染进程  | `src/renderer/src/switch.js` | 渲染卡片、开关防抖（500 ms）、每 5 秒刷新状态（带并发守卫）                                                                                                                                                     |
 | 渲染进程  | `src/renderer/src/config.js` | 配置的 JSON 导出 / 导入                                                                                                                                                                                         |
 | 渲染进程  | `src/renderer/src/delete.js` | 编辑模式下显示的纯净叉号、确认后删除                                                                                                                                                                            |
@@ -159,6 +162,13 @@ v0.1.x 是 Electron 应用，它的 Chromium 配置目录与本版的 WebView2 �
 </details>
 
 <details>
+<summary><strong>更新是怎么做的？</strong></summary>
+
+标题栏「检查更新」会请求 GitHub Releases API。若 API 限流或不可用，应用会从普通 `releases/latest` 重定向里取 tag，再从发布资产 HTML 里取资产名与 `sha256:` 摘要，改用 `github.com` 资产直链下载。安装包必须通过 SHA256 校验、以 `MZ` 开头且不超过 512 MB，之后才会以 `/S /UPDATE /R` 静默启动。启动时的自动检查最多每 6 小时一次。
+
+</details>
+
+<details>
 <summary><strong>macOS / Linux 上能用吗？</strong></summary>
 
 不能。本版只提供 Windows 的 NSIS 安装包，命令层也是 Windows 专用。在其它平台上服务命令会返回明确的「不支持此平台」错误，而不是去调用 Win32 SCM。
@@ -174,7 +184,7 @@ npm run build    # vite build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-**技术栈**：Tauri 2 · Vite 7 · Rust（windows、serde）· 原生 ES 模块 + DOM（无框架）· JSON 配置 · prettier + eslint
+**技术栈**：Tauri 2 · Vite 7 · Rust（windows、reqwest、sha2、semver、serde）· 原生 ES 模块 + DOM（无框架）· JSON 配置 · prettier + eslint
 
 ## 许可
 
