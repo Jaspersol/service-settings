@@ -1,14 +1,13 @@
-/* 自定义标题栏：背景完全透明，与 body 渐变同色，不设任何边框或分隔线 */
+/* 自定义标题栏：白底 + 细分隔线 */
 .titlebar {
   position: relative;
   z-index: 20;
   display: flex;
   align-items: center;
-  height: 44px;
+  height: 48px;
   padding: 0 8px 0 18px;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -29,32 +28,31 @@
   flex: 1;
 }
 
-.titlebar-dot {
-  width: 10px;
-  height: 10px;
+/* 软件 logo：直接使用应用图标（透明 PNG） */
+.titlebar-logo {
+  width: 32px;
+  height: 32px;
   flex: none;
-  border-radius: var(--r-pill);
-  background: linear-gradient(135deg, var(--accent-soft), var(--accent-deep));
-  box-shadow: 0 0 0 3px rgba(127, 167, 158, 0.16);
+  object-fit: contain;
 }
 
 .titlebar-title {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   color: var(--ink);
 }
 
 .titlebar-sub {
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
   color: var(--ink-faint);
 }
 
 .titlebar-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex: none;
 }
 
@@ -62,46 +60,54 @@
 .titlebar-window {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
 }
 
 .titlebar-tool {
-  padding: 5px 11px;
-  border: 0;
-  border-radius: var(--r-xs);
-  background: transparent;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
   color: var(--ink-soft);
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
   letter-spacing: 0.02em;
   white-space: nowrap;
   cursor: pointer;
   transition:
     color 0.2s ease,
-    background-color 0.2s ease;
+    background-color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .titlebar-tool:hover {
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.55);
+  color: var(--accent-ink);
+  background: var(--accent-bg);
+  border-color: rgba(76, 111, 255, 0.28);
 }
 
+/* 「编辑」作为标题栏的主操作：淡蓝底蓝字 */
+.titlebar-tool-edit {
+  color: var(--accent-ink);
+  background: var(--accent-bg);
+  border-color: rgba(76, 111, 255, 0.2);
+}
 .titlebar-tool-edit.is-active {
-  color: var(--accent-deep);
-  background: rgba(127, 167, 158, 0.14);
+  background: #e0e7ff;
+  border-color: rgba(76, 111, 255, 0.42);
 }
 
 .titlebar-btn {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 32px;
+  width: 36px;
+  height: 30px;
   padding: 0;
   border: 0;
   border-radius: var(--r-xs);
   background: transparent;
-  color: var(--ink-soft);
+  color: var(--ink-muted);
   cursor: pointer;
   transition:
     background-color 0.2s ease,
@@ -113,18 +119,18 @@
   height: 10px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.2;
+  stroke-width: 1.3;
   stroke-linecap: round;
 }
 
 .titlebar-btn:hover {
-  background: rgba(120, 136, 164, 0.12);
+  background: #f2f4f8;
   color: var(--ink);
 }
 
 .titlebar-btn-close:hover {
-  background: rgba(186, 106, 106, 0.14);
-  color: #a85a5a;
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 /* ---------- 编辑模式：加号卡片与删除叉号只在此模式出现 ---------- */
@@ -146,5 +152,5 @@ body.editing .delete-icon {
   display: none;
 }
 .titlebar-tool-elevate {
-  color: var(--accent-deep);
+  color: var(--accent-ink);
 }

@@ -29,7 +29,7 @@ English | [中文](README_ZH.md)
 - **Elevation handled once** — the app checks its token at startup and relaunches itself with the Windows `runas` verb if it isn't elevated; if UAC is declined, a 以管理员重启 button stays in the title bar so elevation can be retried without restarting the app
 - **The list survives restarts** — cards are stored in a JSON file managed by the Rust backend
 - **Back up and move your list** — export / import the configuration as a JSON file, from the buttons in the title bar
-- **Frameless window** — the borderless, fully transparent in-page title bar blends into the same gradient as the cards; drag it to move the window and use its minimize / maximize / close buttons
+- **Frameless window** — the in-page title bar is white with a thin divider, above a white rounded panel with blue accents; drag it to move the window and use its minimize / maximize / close buttons
 - **Editing is explicit** — the `+` card and delete × only appear in edit mode (the 编辑 / 完成 button in the title bar), so a stray click can't remove a service
 
 ## Requirements
